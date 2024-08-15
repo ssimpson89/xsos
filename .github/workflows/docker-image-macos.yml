@@ -15,40 +15,34 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Install Podman
         run: |
           brew install podman
-      - name: Setup Podman Environment
-        run: |
-          podman machine init --now
+
       - name: Log in to the Container registry
         uses: redhat-actions/podman-login@v1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build Image as latest
-        id: build-latest
+
+      - name: Build Image
+        id: build-image
         uses: redhat-actions/buildah-build@v2
         with:
           image: ${{ env.IMAGE_NAME }}
-          tags: latest
+          tags: latest,${{ github.ref_name }}
           containerfiles: |
             ./Dockerfile
           context: .
-      - name: Push Image as latest
-        id: push-latest
+  
+      - name: Push Image
+        id: push-image
         uses: redhat-actions/push-to-registry@v2
         with:
-          image: ${{ steps.build-latest.outputs.image }}
-          tags: latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          registry: ${{ env.REGISTRY }}
-      - name: Push Image as release tag
-        id: push-ref
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ steps.build-latest.outputs.image }}
-          tags: ${{ github.ref_name }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          image: ${{ steps.build-image.outputs.image }}
+          tags: latest,${{ github.ref_name }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest,${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           registry: ${{ env.REGISTRY }}
       
       # # This step generates an artifact attestation for the image, which is an unforgeable statement about where and how it was built. It increases supply chain security for people who consume the image. For more information, see "[AUTOTITLE](/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds)." 
