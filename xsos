@@ -1,5 +1,5 @@
 #!/bin/bash
-# xsos v0.7.40 last mod 2025-12-01
+# xsos v0.7.42 last mod 2026-06-12
 # Latest version at <http://github.com/ryran/xsos>
 # Copyright 2012-2026 Ryan Sawhill Aroha <rsaw@redhat.com> and contributors
 #
@@ -117,7 +117,7 @@ fi
 
 # XSOS_ALL_VIEW (str of variables, space-separated)
 #   Controls what content modules to run when -a/--all switch is used
-    : ${XSOS_ALL_VIEW:="bios os kdump cpu intrupt mem disks mpath lspci ethtool softirq bonding ip netdev sysctl ps ss firewall"}
+    : ${XSOS_ALL_VIEW:="bios os kdump cpu intrupt mem disks mpath lspci ethtool softirq bonding ip netdev sysctl ps ss firewall arp"}
 
 # XSOS_DEFAULT_VIEW (str of variables, space-separated)
 #   Controls default content modules, i.e. what to run when none are specififed
@@ -219,7 +219,7 @@ See <github.com/ryran/xsos> to report bugs or suggestions"
 }
 
 HELP_USAGE() {
-  echo "Usage: xsos [DISPLAY OPTIONS] [-6abokcfmdtlerngispSFIN] [SOSREPORT ROOT]
+  echo "Usage: xsos [DISPLAY OPTIONS] [-6abokcfmdtlerngispSFINA] [SOSREPORT ROOT]
   or:  xsos [DISPLAY OPTIONS] {--B|--C|--F|--M|--D|--T|--L|--R|--N|--G|--I|--P FILE}...
   or:  xsos [-?|-h|--help]
 
@@ -245,13 +245,14 @@ Content options:"
  -n, --netdev❚show info from /proc/net/dev
  -g, --bonding❚show bonding and teaming info
  -i, --ip❚show info from ip addr (BASH v4+ required)
-     --net❚alias for: --lspci --ethtool --softirq --netdev --bonding --ip
+     --net❚alias for: --lspci --ethtool --softirq --netdev --bonding --ip --arp
  -s, --sysctl❚show important kernel sysctls
  -p, --ps❚inspect running processes via ps
  -S, --ss❚inspect running processes via ss
  -F, --firewall❚show firewall status
- -I, --ifcfg❚|show ifcfg files summary
- -N, --netstat❚|show ifcfg files summary" | column -ts❚
+ -I, --ifcfg❚show ifcfg files summary
+ -A, --arp❚show info from /proc/net/arp
+ -N, --netstat❚show info from /proc/net/netstat" | column -ts❚
 }
 
 HELP_OPTS_DISPLAY() {
@@ -369,8 +370,8 @@ case $1 in
 esac
 
 # GNU getopt short and long options:
-sopts='6q:u:v:w:xyzabokcfmdtlerngispSFIN'
-lopts='scrub,ipv6,rhsupport,wwid:,unit:,threads,verbose:,width:,nocolor,less,more,all,bios,os,kdump,cpu,intrupt,mem,disks,mpath,lspci,ethtool,softirq,netdev,bonding,ip,net,sysctl,ps,ss,firewall,ifcfg,netstat,B:,C:,F:,M:,D:,T:,L:,R:,N:,G:,I:,P:'
+sopts='6q:u:v:w:xyzabokcfmdtlerngispSFINA'
+lopts='scrub,ipv6,rhsupport,wwid:,unit:,threads,verbose:,width:,nocolor,less,more,all,bios,os,kdump,cpu,intrupt,mem,disks,mpath,lspci,ethtool,softirq,netdev,bonding,ip,net,sysctl,ps,ss,firewall,ifcfg,netstat,arp,B:,C:,F:,M:,D:,T:,L:,R:,N:,G:,I:,P:'
 
 # Check for bad switches
 getopt -Q --name=xsos -o $sopts -l $lopts -- "$@" || { HELP_USAGE; exit 64; }
@@ -423,7 +424,7 @@ _OPT_CHECK() {
 
 # Parse command-line arguments
 PARSE() {
-  unset opts all bios os kdump cpu intrupt mem disks mpath lspci ethtool softirq netdev bonding ip net sysctl ps
+  unset opts all bios os kdump cpu intrupt mem disks mpath lspci ethtool softirq netdev bonding ip net sysctl ps arp
   until [[ $1 == -- ]]; do
     case $1 in
       --scrub)      XSOS_SCRUB_IP_HN=y XSOS_SCRUB_MACADDR=y XSOS_SCRUB_SERIAL=y XSOS_SCRUB_PROXYUSERPASS=y ;;
@@ -446,6 +447,7 @@ PARSE() {
       -z|--more)    XSOS_OUTPUT_HANDLER='more'     ;;
       --rhsupport)  XSOS_OS_RHT_CENTRIC=y          ;;
       -a|--all)     opts=y all=y     ;;
+      -A|--arp)     opts=y arp=y     ;;
       -b|--bios)    opts=y bios=y    ;;
       -o|--os)      opts=y os=y      ;;
       -k|--kdump)   opts=y kdump=y   ;;
@@ -466,7 +468,7 @@ PARSE() {
       -F|--firewall)opts=y firewall=y ;;
       -I|--ifcfg)   opts=y ifcfg=y   ;;
       -N|--netstat) opts=y netstat=y ;;
-      --net)        opts=y lspci=y ethtool=y softirq=y netdev=y ip=y firewall=y bonding=y teaming=y ss=y ifcfg=y netstat=y ;;
+      --net)        opts=y lspci=y ethtool=y softirq=y netdev=y ip=y firewall=y bonding=y teaming=y ss=y ifcfg=y netstat=y arp=y ;;
       
       --B)  sfile[B]=$2; shift ;;
       --F)  sfile[F]=$2; shift ;;
@@ -486,7 +488,7 @@ PARSE() {
   done
   shift #(to get rid of the '--')
   # Set sosroot
-  sosroot=$@
+  sosroot="$@"
 }
 
 # Call the parser
@@ -1075,7 +1077,7 @@ OSINFO() {
     runlevel=$(runlevel)
     initdefault=$(basename $(readlink -q /etc/systemd/system/default.target) 2>/dev/null) &&
       initdefault=${initdefault%.target} ||
-        initdefault=$(gawk -F: '/^id.*initdefault/ {print $2}' </etc/inittab)
+        [[ -r /etc/inittab ]] && initdefault=$(gawk -F: '/^id.*initdefault/ {print $2}' </etc/inittab)
     
   # Otherwise, running on sosreport
   else
@@ -1597,8 +1599,12 @@ INTERRUPT() {
       for (i=2; i <= NF; i++) {
         if ($i ~ "[^0-9]")
           printf " %s", $i
-        else if($i > 0)
-          printf "▊"
+        else if ($i >= 1000000)
+          printf "▊";
+        else if ($i >= 1000)
+          printf "◼";
+        else if ($i > 0)
+          printf "◻";
         else
           printf "."
       }
@@ -2174,7 +2180,7 @@ TEAMING() {
   # If an sosreport, look for sos_commands/teamd/ output...
   else
     files=("$1"/sos_commands/teamd/teamdctl_*_state_dump)
-    if [[ ! -r ${files[0]} ]]; then
+    if [[ ! -r "${files[0]}" ]]; then
       echo -e "${c[Warn2]}Warning:${c[Warn1]} '/sos_commands/teamd/teamdctl_*_state_dump' files unreadable; skipping teaming check${c[0]}" >&2
       echo -en $XSOS_HEADING_SEPARATOR >&2
       return
@@ -2196,7 +2202,7 @@ TEAMING() {
     echo "  Device❚Runner (mode) ❚ifcfg-File TEAM_CONFIG❚Partner MAC Addr❚Ports (*=active; [n]=AggID)"
     echo "  ========❚=================❚========================❚==================❚==============================="
     
-    f=0; for team_input in ${files[@]}; do
+    f=0; for team_input in "${files[@]}"; do
       
       team_name=$(gawk -F '"' '/team_device/,/^$/ {if ($2 == "ifname") {print $4}}' $team_input)
       echo -n "  $team_name❚"
@@ -2296,7 +2302,7 @@ BONDING() {
   # If localhost or sosreport, use that
   else
     files=("$1"/proc/net/bonding/*)
-    if [[ ! -r ${files[0]} ]]; then
+    if [[ ! -r "${files[0]}" ]]; then
       echo -e "${c[Warn2]}Warning:${c[Warn1]} '/proc/net/bonding/' files unreadable; skipping bonding check${c[0]}" >&2
       echo -en $XSOS_HEADING_SEPARATOR >&2
       return
@@ -2346,7 +2352,7 @@ BONDING() {
     echo "  Device❚Mode❚ifcfg-File BONDING_OPTS❚Partner MAC Addr❚Slaves (*=active; [n]=AggID)"
     echo "  ========❚=================❚========================❚==================❚==============================="
     
-    f=0; for bond_input in ${files[@]}; do
+    f=0; for bond_input in "${files[@]}"; do
       
       echo -n "  ${bond_input##*/}❚"
       
@@ -3382,7 +3388,7 @@ PSCHECK() {
   fi
   
   # Calculate top cpu-using & mem-using users
-  if [[ $XSOS_PS_LEVEL < 3 ]]; then  # If verbosity level 0-2, restrict number of users shown
+  if [[ $XSOS_PS_LEVEL -lt 3 ]]; then  # If verbosity level 0-2, restrict number of users shown
     # Process ps input to generate summary user-list of top-users
     top_users=$(
       gawk -vu=$(tr '[:lower:]' '[:upper:]' <<<"$XSOS_PS_UNIT") '
@@ -3882,7 +3888,7 @@ NETSTAT(){
   }
   _print_proc_net_array(){
     declare -A __array="$*"
-    for hdr in ${!__array[@]}; do
+    for hdr in "${!__array[@]}"; do
       val="${__array[$hdr]}"
       [ "${XSOS_NETSTAT_IGNORE_ZERO}" == "y" ]   && [ "$val" -eq "0" ] && continue
       [ "${XSOS_NETSTAT_FILTER_REGEX}" != "" ]    && [[ ! ${hdr,,} =~ ${XSOS_NETSTAT_FILTER_REGEX,,} ]]    && continue
@@ -3901,6 +3907,32 @@ NETSTAT(){
   [ -f "$1/proc/net/snmp6" ]   && _print_proc_net_array "($(cat $1/proc/net/snmp6 | awk '{ printf "[%s]=%d ", $1, $2}'))"
   ) | LC_ALL=C sort -k 1.9 | sed "s/^/$XSOS_INDENT_H1/g"
   
+}
+
+ARP() {
+  # Local vars:
+  local arp_input_file
+
+  [[ -f $1 ]] && arp_input_file=$1 || arp_input_file=$1/proc/net/arp
+
+  echo -e "${c[H1]}ARP${c[0]}"
+
+  # Check if file exists and is not empty
+  if [[ ! -f "$arp_input_file" ]]; then
+    echo "${XSOS_INDENT_H1}File not found: $arp_input_file" >&2
+    return 1
+  fi
+
+  # Skip header line and format output
+  tail -n+2 "$arp_input_file" | gawk -v indent="$XSOS_INDENT_H1" '
+    BEGIN {
+      printf "%s%-18s %-8s %-8s %-19s %-8s %s\n", indent, "IP address", "HW type", "Flags", "HW address", "Mask", "Device"
+    }
+    {
+      # Fields: IP address, HW type, Flags, HW address, Mask, Device
+      printf "%s%-18s %-8s %-8s %-19s %-8s %s\n", indent, $1, $2, $3, $4, $5, $6
+    }
+  '
 }
 
 #-------------------------------------------------------------------------------
@@ -4012,7 +4044,8 @@ trap "rm -rf $TMPDIR 2>/dev/null" EXIT
     SOS_CHECKFILE firewall "sos_commands/systemd/systemctl_status_--all" && FIREWALL   "$sosroot"
     SOS_CHECKFILE ifcfg   "etc/sysconfig/network-scripts"      && IFCFG     "$sosroot"
     SOS_CHECKFILE netstat "/proc/net/netstat"                  && NETSTAT   "$sosroot"
-    
+    SOS_CHECKFILE arp     "proc/net/arp"                       && ARP       "$sosroot"
+
   # If no SOSREPORT-ROOT provided, run checks against local system
   else
     [[ -n $bios ]]    && COND_RUN dmidecode --require_root
@@ -4037,6 +4070,7 @@ trap "rm -rf $TMPDIR 2>/dev/null" EXIT
     [[ -n $firewall ]]&& FIREWALL
     [[ -n $ifcfg ]]   && IFCFG
     [[ -n $netstat ]] && NETSTAT
+    [[ -n $arp ]]     && ARP
 
   fi
   
